@@ -136,11 +136,16 @@ HELP_TEXT = """\
    [b]Sort results[/] by most/fewest comments, most/least viewed or liked, or
    newest/oldest. [b]Save[/] a config as a named preset and [b]Open[/] it later to
    reuse it; the built-in "Buyer intent" preset filters to where / buy / price.
+ • [b]Harvest[/] — [b]o[/] cycles the comment sort (likes / newest / oldest / video
+   keyword / author). [b]space[/] selects a comment, [b]a[/] all, [b]n[/] none; Reply targets
+   your selection, or [i]all[/] harvested when nothing is selected. [b]e[/] exports to
+   HTML / Markdown / text / CSV / JSON.
  • [b]Review[/] mode — for each AI draft: [b]a[/] accept (keeps edits), [b]r[/] regenerate,
    [b]s[/] skip, [b]c[/] copy link. Then [b]p[/] to batch-post everything you accepted.
  • [b]Auto-post[/] mode — generates + posts on a timer with a per-run cap.
  • [b]Dry-run[/] (Settings) — logs replies instead of posting. Test with this ON.
- • [b]Temperature[/] (Settings) — lower = safe/consistent, higher = varied drafts.
+ • [b]Post spacing[/] (Settings) — set a min and max for a random delay between
+   posts (e.g. 20–190s) so the cadence looks natural, not botty.
 
 [b #57c84d]Global keys[/]
  [b]?[/] help      [b]s[/] settings (from dashboard)      [b]q[/] quit
@@ -318,6 +323,59 @@ class PresetPickerModal(ModalScreen):
         self.app.cfg.delete_preset(name)
         self.app.notify(f"Deleted preset “{name}”.")
         self._refresh()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class ExportModal(ModalScreen):
+    """Pick an export format. Dismisses with a format id (see EXPORT_FORMATS)."""
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(self, formats, **kwargs):
+        super().__init__(**kwargs)
+        self._formats = formats  # list of (id, label, ext, description)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="export-box"):
+            yield Label("📄  Export harvested comments", id="export-title")
+            yield OptionList(id="export-list")
+            yield Static("[b]enter[/] export   ·   [b]esc[/] cancel", id="export-hint")
+            with Horizontal(classes="actions"):
+                yield Button("Export (enter)", variant="success", id="export-ok")
+                yield Button("Cancel (esc)", variant="primary", id="export-cancel")
+
+    def on_mount(self) -> None:
+        olist = self.query_one("#export-list", OptionList)
+        for _id, label, ext, desc in self._formats:
+            opt = Text()
+            opt.append(label, style="bold")
+            opt.append(f"  .{ext}", style="dim")
+            opt.append("\n  " + desc, style="dim")
+            olist.add_option(Option(opt))
+        olist.highlighted = 0
+        olist.focus()
+
+    def _selected(self):
+        idx = self.query_one("#export-list", OptionList).highlighted
+        if idx is None or not (0 <= idx < len(self._formats)):
+            return None
+        return self._formats[idx][0]
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self.action_export()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "export-ok":
+            self.action_export()
+        else:
+            self.action_cancel()
+
+    def action_export(self) -> None:
+        fmt = self._selected()
+        if fmt is not None:
+            self.dismiss(fmt)
 
     def action_cancel(self) -> None:
         self.dismiss(None)

@@ -59,6 +59,9 @@ class FrogsApp(App):
         # In-memory harvest results shared across screens.
         self.harvest_videos = []
         self.harvest_blocks = []
+        # Comments chosen on the Harvest screen for the next reply run
+        # (list of (video, comment) pairs). None -> reply to all harvested.
+        self.reply_targets = None
         # Session counters (for the dashboard).
         self.session_posted = 0
 

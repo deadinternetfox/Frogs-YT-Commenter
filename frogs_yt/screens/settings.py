@@ -55,8 +55,13 @@ class SettingsScreen(Screen):
             )
             with Horizontal(classes="row"):
                 yield Input(str(cfg["rate_limit_seconds"]), id="rate", type="integer")
+                yield Input(str(cfg.get("rate_limit_max_seconds", 0)), id="rate-max", type="integer")
                 yield Input(str(cfg["per_run_cap"]), id="cap", type="integer")
-            yield Label("↑ seconds between posts   ·   max posts per auto run", classes="hint")
+            yield Label(
+                "↑ min · max seconds between posts (set max > min for natural random "
+                "spacing, e.g. 20 & 190)   ·   max posts per auto run",
+                classes="hint",
+            )
             with Horizontal(classes="actions"):
                 yield Label("Dry-run (log instead of posting)  ")
                 yield Switch(value=cfg["dry_run"], id="dry-run")
@@ -91,6 +96,7 @@ class SettingsScreen(Screen):
         cfg.set("system_prompt", self.query_one("#prompt", TextArea).text)
         cfg.set("reply_mode", self.query_one("#reply-mode", Select).value)
         cfg.set("rate_limit_seconds", self._int("rate", 20))
+        cfg.set("rate_limit_max_seconds", self._int("rate-max", 0))
         cfg.set("per_run_cap", self._int("cap", 25))
         cfg.set("dry_run", self.query_one("#dry-run", Switch).value)
 

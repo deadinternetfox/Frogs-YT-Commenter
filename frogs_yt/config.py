@@ -42,7 +42,8 @@ DEFAULTS = {
     },
     "system_prompt": DEFAULT_SYSTEM_PROMPT,
     "reply_mode": "review",       # "review" | "auto"
-    "rate_limit_seconds": 20,
+    "rate_limit_seconds": 20,     # min seconds between posts
+    "rate_limit_max_seconds": 0,  # if > min, wait a RANDOM time in [min, max]
     "per_run_cap": 25,
     "dry_run": False,
     "defaults": {

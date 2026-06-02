@@ -1,29 +1,49 @@
-"""harvest.py — show harvested videos + comments, launch the reply flow."""
+"""harvest.py — show harvested videos + comments, pick targets, launch replies."""
 
 import os
+from datetime import datetime
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.screen import Screen
 from textual.widgets import Button, DataTable, Footer, Header, Label
 
-from .. import core
+from .. import core, replier
+from ..widgets import ExportModal
+from .autopost import AutopostScreen
+from .review import ReviewScreen
+
+# Comment sort modes cycled with `o`.
+#   (id, label, key over a (video, comment) pair, reverse?)
+SORT_MODES = [
+    ("likes",   "most liked", lambda vc: int(vc[1].get("likes", 0) or 0), True),
+    ("recent",  "newest",     lambda vc: vc[1].get("published", ""),      True),
+    ("oldest",  "oldest",     lambda vc: vc[1].get("published", ""),      False),
+    ("keyword", "video keyword",
+     lambda vc: ((vc[0].get("matched_keyword") or "").lower(),
+                 -int(vc[1].get("likes", 0) or 0)), False),
+    ("author",  "author A–Z", lambda vc: (vc[1].get("author") or "").lower(), False),
+]
 
 
 class HarvestScreen(Screen):
     BINDINGS = [
         ("escape", "back", "Back"),
-        ("e", "export", "Export .md"),
-        ("r", "reply", "Reply to comments"),
+        ("e", "export", "Export"),
+        ("r", "reply", "Reply"),
         ("c", "copy_link", "Copy link"),
-        ("o", "toggle_sort", "Sort"),
+        ("o", "cycle_sort", "Sort"),
+        ("space", "toggle_select", "Select"),
+        ("a", "select_all", "Select all"),
+        ("n", "select_none", "Clear sel"),
     ]
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.video_filter = None       # None = all videos
-        self.sort_by_likes = True      # default: most-liked first
+        self.sort_idx = 0              # index into SORT_MODES
         self.highlighted_comment = None
+        self.selected = set()          # commentIds chosen to reply to
         self._repopulating = False     # ignore auto-highlight events during rebuild
 
     def compose(self) -> ComposeResult:
@@ -36,7 +56,7 @@ class HarvestScreen(Screen):
             mode = self.app.cfg["reply_mode"]
             label = "Auto-post replies" if mode == "auto" else "Review & reply"
             yield Button(f"💬  {label}", id="reply", variant="success")
-            yield Button("📄  Export markdown", id="export")
+            yield Button("📄  Export…", id="export")
             yield Button("🔗  Copy link", id="copy")
             yield Button("⬅  Back", id="back")
         yield Footer()
@@ -45,11 +65,15 @@ class HarvestScreen(Screen):
         vt = self.query_one("#videos-table", DataTable)
         vt.add_columns("Title", "Channel", "Keyword", "Comments", "Views")
         ct = self.query_one("#comments-table", DataTable)
-        ct.add_columns("Author", "👍", "Replied", "Comment")
+        ct.add_columns("Sel", "Author", "👍", "Replied", "Comment")
         self._populate_videos()
         self._show_comments()
 
     # -- data helpers -----------------------------------------------------
+    def _all_pairs(self):
+        """Every (video, comment) pair across the whole harvest."""
+        return [(v, c) for v, comments in self.app.harvest_blocks for c in comments]
+
     def _total_comments(self) -> int:
         return sum(len(c) for _, c in self.app.harvest_blocks)
 
@@ -71,34 +95,39 @@ class HarvestScreen(Screen):
             )
         self._repopulating = False
 
-    def _comments_for(self, video_id):
-        out = []
-        for video, comments in self.app.harvest_blocks:
-            if video_id is None or video["videoId"] == video_id:
-                out.extend(comments)
-        if self.sort_by_likes:
-            out = sorted(out, key=lambda c: c["likes"], reverse=True)
-        return out
+    def _pairs_for(self, video_id):
+        pairs = [
+            (v, c) for v, c in self._all_pairs()
+            if video_id is None or v["videoId"] == video_id
+        ]
+        _id, _label, key, reverse = SORT_MODES[self.sort_idx]
+        return sorted(pairs, key=key, reverse=reverse)
 
     def _show_comments(self) -> None:
+        # Forget selections for comments no longer present (e.g. a new harvest).
+        self.selected &= {c["commentId"] for _v, c in self._all_pairs()}
         ct = self.query_one("#comments-table", DataTable)
         ct.clear()
-        rows = self._comments_for(self.video_filter)
-        for c in rows:
+        pairs = self._pairs_for(self.video_filter)
+        for _video, c in pairs:
             replied = "✓" if self.app.replied.has(c["commentId"]) else ""
+            sel = "✅" if c["commentId"] in self.selected else ""
             ct.add_row(
+                sel,
                 _trim(c["author"], 18),
                 str(c["likes"]),
                 replied,
-                _trim(c["text"].replace("\n", " "), 70),
+                _trim(c["text"].replace("\n", " "), 64),
                 key=c["commentId"],
             )
-        sort_label = "by likes" if self.sort_by_likes else "by recency"
+        mode_label = SORT_MODES[self.sort_idx][1]
         scope = "all videos" if self.video_filter is None else "selected video"
+        nsel = len(self.selected)
+        sel_txt = f"   ·   {nsel} selected" if nsel else "   ·   none selected → reply to all"
         self.query_one("#comments-title", Label).update(
-            f"Comments — {len(rows)} ({scope}, sorted {sort_label})"
+            f"Comments — {len(pairs)} ({scope}, sorted by {mode_label}){sel_txt}"
         )
-        self.highlighted_comment = rows[0]["commentId"] if rows else None
+        self.highlighted_comment = pairs[0][1]["commentId"] if pairs else None
 
     # -- events -----------------------------------------------------------
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
@@ -111,6 +140,11 @@ class HarvestScreen(Screen):
         elif event.data_table.id == "comments-table":
             self.highlighted_comment = event.row_key.value
 
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        # Enter / click on a comment row toggles whether it's a reply target.
+        if event.data_table.id == "comments-table":
+            self._toggle(event.row_key.value)
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         handler = {
             "back": self.action_back,
@@ -121,19 +155,44 @@ class HarvestScreen(Screen):
         if handler:
             handler()
 
+    # -- selection --------------------------------------------------------
+    def _toggle(self, comment_id) -> None:
+        if not comment_id:
+            return
+        self.selected.discard(comment_id) if comment_id in self.selected \
+            else self.selected.add(comment_id)
+        self._refresh_keep_cursor()
+
+    def action_toggle_select(self) -> None:
+        self._toggle(self.highlighted_comment)
+
+    def action_select_all(self) -> None:
+        self.selected.update(c["commentId"] for _v, c in self._pairs_for(self.video_filter))
+        self._refresh_keep_cursor()
+
+    def action_select_none(self) -> None:
+        self.selected.clear()
+        self._refresh_keep_cursor()
+
+    def _refresh_keep_cursor(self) -> None:
+        ct = self.query_one("#comments-table", DataTable)
+        row = ct.cursor_row
+        self._show_comments()
+        if row is not None and 0 <= row < ct.row_count:
+            ct.move_cursor(row=row)
+
     # -- actions ----------------------------------------------------------
     def action_back(self) -> None:
         self.app.pop_screen()
 
-    def action_toggle_sort(self) -> None:
-        self.sort_by_likes = not self.sort_by_likes
-        self._show_comments()
+    def action_cycle_sort(self) -> None:
+        self.sort_idx = (self.sort_idx + 1) % len(SORT_MODES)
+        self._refresh_keep_cursor()
 
     def _find_comment(self, comment_id):
-        for _v, comments in self.app.harvest_blocks:
-            for c in comments:
-                if c["commentId"] == comment_id:
-                    return c
+        for _v, c in self._all_pairs():
+            if c["commentId"] == comment_id:
+                return c
         return None
 
     def action_copy_link(self) -> None:
@@ -144,23 +203,70 @@ class HarvestScreen(Screen):
         self.app.copy_to_clipboard(c["link"])
         self.app.notify("Comment link copied to clipboard.")
 
-    def action_export(self) -> None:
-        path = os.path.join(os.getcwd(), "frogs_leads.md")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(core.render_comments_md(self.app.harvest_blocks))
-        self.app.notify(f"Exported to {path}", title="Saved")
-
+    # -- reply ------------------------------------------------------------
     def action_reply(self) -> None:
         if not self.app.harvest_blocks:
-            self.app.notify("Nothing to reply to.", severity="warning")
+            self.app.notify("No harvested comments yet — run a search first.",
+                            severity="warning")
             return
-        if self.app.cfg["reply_mode"] == "auto":
-            self.app.push_screen("autopost")
+        if self.selected:
+            targets = [(v, c) for v, c in self._all_pairs()
+                       if c["commentId"] in self.selected]
+            scope = f"{len(targets)} selected"
         else:
-            self.app.push_screen("review")
+            targets = self._all_pairs()
+            scope = f"all {len(targets)} harvested"
+        # Drop ones already replied to (dedupe never double-replies).
+        pending = [(v, c) for v, c in targets
+                   if not self.app.replied.has(c["commentId"])]
+        if not pending:
+            self.app.notify(
+                f"Every one of the {scope} comments has already been replied to.",
+                title="Nothing new to reply to", severity="warning", timeout=7,
+            )
+            return
+        self.app.reply_targets = pending
+        already = len(targets) - len(pending)
+        note = f" ({already} already replied — skipped)" if already else ""
+        self.app.notify(f"Replying to {len(pending)} comments{note}.")
+        if self.app.cfg["reply_mode"] == "auto":
+            self.app.push_screen(AutopostScreen())
+        else:
+            self.app.push_screen(ReviewScreen())
+
+    # -- export -----------------------------------------------------------
+    def action_export(self) -> None:
+        if not self.app.harvest_blocks:
+            self.app.notify("No harvested comments to export.", severity="warning")
+            return
+        self.app.push_screen(ExportModal(core.EXPORT_FORMATS), self._do_export)
+
+    def _do_export(self, fmt) -> None:
+        if not fmt:
+            return
+        now = datetime.now()
+        blocks = self.app.harvest_blocks
+        renderers = {
+            "html": (lambda b: core.render_comments_html(
+                b, generated=now.strftime("%Y-%m-%d %H:%M")), "html"),
+            "md": (core.render_comments_md, "md"),
+            "txt": (core.render_comments_txt, "txt"),
+            "csv": (core.render_comments_csv, "csv"),
+            "json": (core.render_comments_json, "json"),
+        }
+        render, ext = renderers[fmt]
+        path = os.path.join(os.getcwd(), f"frogs_harvest_{now.strftime('%Y%m%d_%H%M%S')}.{ext}")
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(render(blocks))
+        except OSError as e:
+            self.app.notify(f"Export failed: {e}", severity="error")
+            return
+        self.app.notify(f"Exported {self._total_comments()} comments → {path}",
+                        title="Saved 🐸", timeout=7)
 
     def on_screen_resume(self) -> None:
-        # Refresh "replied" flags after returning from a reply flow.
+        # Refresh "replied" flags + any new harvest after returning to this screen.
         self._populate_videos()
         self._show_comments()
 

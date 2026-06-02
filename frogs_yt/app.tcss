@@ -237,3 +237,38 @@ SavePresetModal, PresetPickerModal {
     color: $text-muted;
     padding: 0 0 1 0;
 }
+
+/* Export format picker (same look as the preset picker) */
+ExportModal {
+    align: center middle;
+    background: $background 70%;
+}
+
+#export-box {
+    width: 72;
+    max-width: 92%;
+    height: auto;
+    max-height: 90%;
+    padding: 1 3 0 3;
+    border: thick $success 70%;
+    background: $panel;
+}
+
+#export-title {
+    text-style: bold;
+    color: $success;
+    padding: 0 0 1 0;
+}
+
+#export-list {
+    height: auto;
+    max-height: 16;
+    margin: 0 0 1 0;
+    border: round $primary;
+    background: $surface;
+}
+
+#export-hint {
+    color: $text-muted;
+    padding: 0 0 1 0;
+}

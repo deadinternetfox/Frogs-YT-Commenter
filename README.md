@@ -61,16 +61,22 @@ The first launch creates a local `.venv` and installs dependencies automatically
    liked, or newest/oldest (the harvest table shows comment + view counts).
    **💾 Save preset** stores the whole config under a name, and **📂 Open preset**
    loads it back (load · delete in place). A built-in **Buyer intent** preset
-   filters comments to ones saying *where / buy / price / link* etc. Within a
-   video, comments still sort by likes (press `o` to flip to recency).
-3. **Review** (default, safest) — for each AI draft:
+   filters comments to ones saying *where / buy / price / link* etc.
+3. **Harvest view** — press `o` to cycle the comment sort (likes / newest / oldest /
+   video keyword / author). `space` selects a comment, `a` selects all, `n` clears.
+   **Reply** targets your selection, or **all harvested** when nothing is selected
+   (already-replied comments are skipped automatically). Press `e` to **export** the
+   harvest to **HTML** (polished frog table), **Markdown**, **plain text**, **CSV**,
+   or **JSON** — saved as `frogs_harvest_<timestamp>.<ext>` in the current folder.
+4. **Review** (default, safest) — for each AI draft:
    - `a` accept (keeps your edits)  ·  `r` regenerate  ·  `s` skip  ·  `c` copy link
    - then `p` to **batch-post everything you accepted** (throttled).
-4. **Auto-post mode** — generates *and* posts on a timer with a per-run cap. Toggle it
+5. **Auto-post mode** — generates *and* posts on a timer with a per-run cap. Toggle it
    in **Settings**.
-5. **Settings** — edit the AI **prompt**, switch LLM provider/model, set
+6. **Settings** — edit the AI **prompt**, switch LLM provider/model, set
    **temperature** (lower = consistent, higher = varied) and reply length, reply mode,
-   rate-limit, per-run cap, and the **Dry-run** switch.
+   **post spacing** (min · max seconds — set max > min for a *random* delay between
+   posts so the cadence looks natural), per-run cap, and the **Dry-run** switch.
 
 Press **`?`** anywhere for in-app help. **`q`** quits, **`esc`** goes back.
 

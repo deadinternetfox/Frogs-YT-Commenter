@@ -5,6 +5,9 @@ can present them. Read paths (search/comments) need only an API key; the write
 path (post_reply) takes an already-built, OAuth-authorized service object.
 """
 
+import csv
+import html
+import io
 import json
 import time
 import urllib.error
@@ -382,3 +385,134 @@ def render_comments_md(blocks):
             )
     header = f"# {total} comments\n"
     return header + "\n".join(lines) + "\n"
+
+
+# --------------------------------------------------------------------------
+# Other export formats (used by the Harvest screen's "Export…" picker)
+# --------------------------------------------------------------------------
+# (id, label, file extension, one-line description)
+EXPORT_FORMATS = [
+    ("html", "🐸 HTML document", "html", "Polished, frog-themed page with a clickable table"),
+    ("md",   "Markdown (.md)",   "md",   "Headed list with reply links — notes & GitHub"),
+    ("txt",  "Plain text (.txt)", "txt", "Simple and readable, no formatting"),
+    ("csv",  "CSV (.csv)",       "csv",  "Spreadsheet: one row per comment"),
+    ("json", "JSON (.json)",     "json", "Raw structured data for scripts"),
+]
+
+
+def _count(blocks):
+    return sum(len(c) for _, c in blocks)
+
+
+def render_comments_txt(blocks):
+    """Plain-text export: a video heading, then each comment + reply link."""
+    out = [
+        f"FROGS — {_count(blocks)} harvested comments across {len(blocks)} videos",
+        "=" * 64,
+    ]
+    for meta, comments in blocks:
+        if meta:
+            out += ["", f"{meta.get('title', '')}  —  {meta.get('channel', '')}",
+                    f"  {meta.get('url', '')}", "-" * 48]
+        for c in comments:
+            out.append(f"  [{c['likes']:>4} likes]  {c['author']}: {c['text'].strip()}")
+            out.append(f"               reply: {c['link']}")
+    return "\n".join(out) + "\n"
+
+
+def render_comments_csv(blocks):
+    """CSV export: one row per comment, with its video's metadata."""
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow([
+        "video_title", "channel", "video_url", "matched_keyword", "video_views",
+        "author", "likes", "published", "comment", "comment_link", "comment_id",
+    ])
+    for meta, comments in blocks:
+        m = meta or {}
+        for c in comments:
+            w.writerow([
+                m.get("title", ""), m.get("channel", ""), m.get("url", ""),
+                m.get("matched_keyword", ""), m.get("views", ""),
+                c["author"], c["likes"], c.get("published", ""),
+                c["text"], c["link"], c["commentId"],
+            ])
+    return buf.getvalue()
+
+
+def render_comments_json(blocks):
+    """JSON export: a list of {video, comments} objects (raw harvested data)."""
+    data = [{"video": meta, "comments": comments} for meta, comments in blocks]
+    return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+
+
+_HTML_STYLE = """
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 2rem; font-family: ui-sans-serif, system-ui, sans-serif;
+       background: #0e1a10; color: #e6f4d8; }
+header { max-width: 1100px; margin: 0 auto 1.5rem; }
+h1 { color: #57c84d; margin: 0 0 .25rem; font-size: 1.6rem; }
+.sub { color: #8aa888; font-size: .9rem; }
+.wrap { max-width: 1100px; margin: 0 auto; }
+table { width: 100%; border-collapse: collapse; background: #13251a;
+        border: 1px solid #2c4a36; border-radius: 10px; overflow: hidden; }
+th { text-align: left; background: #1b3324; color: #a4e057; padding: .6rem .8rem;
+     position: sticky; top: 0; font-size: .8rem; text-transform: uppercase;
+     letter-spacing: .04em; }
+td { padding: .55rem .8rem; border-top: 1px solid #20392a; vertical-align: top; }
+tr.vid td { background: #16291d; }
+tr.vid a { color: #7fd4ff; font-weight: 600; text-decoration: none; }
+tr.cmt:hover td { background: #18301f; }
+.author { font-weight: 600; white-space: nowrap; }
+.likes { color: #e0c84a; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.muted { color: #8aa888; font-weight: 400; }
+a.reply { color: #57c84d; text-decoration: none; white-space: nowrap; }
+a.reply:hover { text-decoration: underline; }
+footer { max-width: 1100px; margin: 1.5rem auto 0; color: #6f8a70; font-size: .8rem; }
+"""
+
+
+def render_comments_html(blocks, generated=None):
+    """A self-contained, frog-themed HTML page with a clickable comment table."""
+    esc = html.escape
+    rows = []
+    for meta, comments in blocks:
+        if meta:
+            views = meta.get("views")
+            extra = f" · {views:,} views" if isinstance(views, int) and views else ""
+            rows.append(
+                '<tr class="vid"><td colspan="4">'
+                f'<a href="{esc(meta.get("url", "#"))}" target="_blank" rel="noopener">'
+                f'{esc(meta.get("title", "(untitled)"))}</a>'
+                f'<span class="muted"> — {esc(meta.get("channel", ""))}'
+                f' · kw: {esc(meta.get("matched_keyword", ""))}{extra}</span></td></tr>'
+            )
+        for c in comments:
+            rows.append(
+                '<tr class="cmt">'
+                f'<td class="author">{esc(c["author"])}</td>'
+                f'<td class="likes">{c["likes"]}&#128077;</td>'
+                f'<td>{esc(c["text"]).replace(chr(10), "<br>")}</td>'
+                f'<td><a class="reply" href="{esc(c["link"])}" target="_blank" '
+                'rel="noopener">reply &#8599;</a></td>'
+                "</tr>"
+            )
+    sub = f"{_count(blocks)} comments across {len(blocks)} videos"
+    if generated:
+        sub += f" · generated {esc(generated)}"
+    return (
+        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        "<title>Frogs — harvested comments</title>"
+        f"<style>{_HTML_STYLE}</style></head><body>"
+        f'<header><h1>&#128056; Frogs — harvested comments</h1>'
+        f'<div class="sub">{sub}</div></header>'
+        '<div class="wrap"><table><thead><tr>'
+        "<th>Author</th><th>Likes</th><th>Comment</th><th>Reply</th>"
+        "</tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table></div>"
+        "<footer>Exported by Frogs YouTube Replier &#128056; — reply links open the "
+        "comment on YouTube.</footer></body></html>\n"
+    )

@@ -8,8 +8,27 @@
 
 import json
 import os
+import random
 
 from . import config, core
+
+
+def next_delay(cfg):
+    """Seconds to wait before the next post.
+
+    When a max is set above the min, return a random value in [min, max] so
+    posting cadence looks human instead of metronomic; otherwise the fixed min.
+    """
+    lo = max(0, int(cfg.get("rate_limit_seconds", 20) or 0))
+    hi = int(cfg.get("rate_limit_max_seconds", 0) or 0)
+    return random.randint(lo, hi) if hi > lo else lo
+
+
+def delay_label(cfg):
+    """Human description of the post spacing, e.g. '20s' or '20–190s random'."""
+    lo = max(0, int(cfg.get("rate_limit_seconds", 20) or 0))
+    hi = int(cfg.get("rate_limit_max_seconds", 0) or 0)
+    return f"{lo}–{hi}s random" if hi > lo else f"{lo}s"
 
 
 class RepliedStore:

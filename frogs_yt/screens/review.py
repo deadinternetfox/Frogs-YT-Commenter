@@ -43,7 +43,12 @@ class ReviewScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.queue = replier.pending_comments(self.app.harvest_blocks, self.app.replied)
+        # Targets chosen on the Harvest screen (selected, or all). Fall back to
+        # every un-replied harvested comment if entered without an explicit set.
+        targets = self.app.reply_targets
+        self.app.reply_targets = None
+        self.queue = targets if targets is not None else \
+            replier.pending_comments(self.app.harvest_blocks, self.app.replied)
         self.idx = 0
         self._drafts = {}     # idx -> generated text (cache + prefetch)
         self._gen_seq = {}    # idx -> latest generation token

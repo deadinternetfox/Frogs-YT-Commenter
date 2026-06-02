@@ -50,15 +50,19 @@ class AutopostScreen(Screen):
             ]
             self.run_size = len(self.queue)
         else:
-            # Generate-as-you-go from the harvest, capped per run.
-            pend = replier.pending_comments(self.app.harvest_blocks, self.app.replied)
+            # Generate-as-you-go from the harvest targets (chosen on Harvest, or
+            # all un-replied), capped per run.
+            targets = self.app.reply_targets
+            self.app.reply_targets = None
+            pend = targets if targets is not None else \
+                replier.pending_comments(self.app.harvest_blocks, self.app.replied)
             self.queue = [(v, c, None) for (v, c) in pend]
             self.run_size = min(len(self.queue), self.app.cfg["per_run_cap"])
 
         log = self.query_one("#autopost-log", RichLog)
         log.write(f"[bold]{len(self.queue)}[/] comments queued.")
         log.write(f"Will post up to [bold]{self.run_size}[/] this run "
-                  f"(delay={self.app.cfg['rate_limit_seconds']}s).")
+                  f"(delay={replier.delay_label(self.app.cfg)}).")
         if self.app.cfg["dry_run"]:
             log.write("[yellow]DRY-RUN is ON — nothing will actually post.[/]")
 
@@ -101,7 +105,6 @@ class AutopostScreen(Screen):
         self.app.call_from_thread(self._set_running, True)
         cfg = self.app.cfg
         dry = cfg["dry_run"]
-        delay = cfg["rate_limit_seconds"]
         service = None if dry else self.app.youtube_service()
         posted = skipped = errors = 0
 
@@ -134,7 +137,9 @@ class AutopostScreen(Screen):
             self.app.call_from_thread(self._log, f"{tag} → {comment['author']}: {text[:60]}")
 
             # Throttle between real posts (not in dry-run; skip after the last).
+            # Re-roll each gap so a random range gives a natural, varied cadence.
             if not dry and i + 1 < self.run_size and not self._cancel.is_set():
+                delay = replier.next_delay(cfg)
                 self.app.call_from_thread(self._log, f"  …waiting {delay}s")
                 if self._cancel.wait(timeout=delay):
                     break
