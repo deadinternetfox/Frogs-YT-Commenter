@@ -13,7 +13,7 @@ from textual.widgets.option_list import Option
 FROG_ART = r"""
          .--.        .--.
         /    \      /    \        F R O G S
-       | (o ) |    | ( o)|        ─────────────
+        |(o )|      |( o)|        ─────────────
         \    /------\    /        YouTube  Replier
          '--'   ..   '--'
         /  _.-'    '-._  \
