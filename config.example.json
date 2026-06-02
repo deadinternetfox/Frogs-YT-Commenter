@@ -1,0 +1,29 @@
+{
+  "_comment": "EXAMPLE ONLY. You normally never edit this — enter everything inside the app (Login + Settings screens). The real file is created automatically at ~/.config/frogs_yt_replier/config.json (Windows: %APPDATA%\\..\\.config or your XDG dir) with 0600 permissions. This shows the shape and where each value goes. DO NOT put real keys here or commit a filled-in copy.",
+
+  "youtube_api_key": "AIza...your-youtube-data-api-v3-key...",
+  "client_secret_path": "",
+
+  "llm": {
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-chat",
+    "api_key": "sk-...your-deepseek-or-openai-key...",
+    "temperature": 0.8,
+    "max_tokens": 200
+  },
+
+  "system_prompt": "You are the friendly voice of <YOUR BRAND>. Reply to the YouTube comment warmly in one or two short sentences. Never sound like an ad or a bot. Use at most one emoji. Only include a link if the comment explicitly asks where to buy.",
+
+  "reply_mode": "review",
+  "rate_limit_seconds": 20,
+  "per_run_cap": 25,
+  "dry_run": true,
+
+  "defaults": {
+    "keywords": ["frog plushie", "amigurumi frog"],
+    "max_videos": 10,
+    "max_comments": 50,
+    "match_words": ["where", "buy", "link", "shop", "price"],
+    "order": "relevance"
+  }
+}

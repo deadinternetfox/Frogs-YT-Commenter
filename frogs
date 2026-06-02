@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+#
+# frogs — launcher for "Frogs YouTube Replier".
+# Creates a local .venv, installs requirements once, then runs the Textual app.
+#
+#   ./frogs              launch the app
+#   ./frogs --reinstall  force-reinstall dependencies, then launch
+#   ./frogs <args...>    any extra args are passed through to `python -m frogs_yt`
+#
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV="$HERE/.venv"
+PY="$VENV/bin/python"
+SENTINEL="$VENV/.frogs_installed"
+REQ="$HERE/requirements.txt"
+
+REINSTALL=0
+ARGS=()
+for a in "$@"; do
+  if [[ "$a" == "--reinstall" ]]; then REINSTALL=1; else ARGS+=("$a"); fi
+done
+
+frog_say() { printf '🐸  %s\n' "$1"; }
+
+# 1. Create the venv if missing.
+if [[ ! -d "$VENV" ]]; then
+  frog_say "First run — creating virtual environment in .venv ..."
+  if ! python3 -m venv "$VENV"; then
+    echo "Failed to create venv. Is python3-venv installed? (sudo apt install python3-venv)" >&2
+    exit 1
+  fi
+  "$PY" -m pip install --quiet --upgrade pip >/dev/null 2>&1 || true
+fi
+
+# 2. Install requirements once (or when forced / requirements changed).
+NEED_INSTALL=0
+if [[ "$REINSTALL" == "1" || ! -f "$SENTINEL" ]]; then
+  NEED_INSTALL=1
+elif [[ "$REQ" -nt "$SENTINEL" ]]; then
+  NEED_INSTALL=1  # requirements.txt edited since last install
+fi
+
+if [[ "$NEED_INSTALL" == "1" ]]; then
+  frog_say "Installing dependencies (this happens once) ..."
+  if ! "$PY" -m pip install -r "$REQ"; then
+    echo "" >&2
+    echo "Dependency install failed. If you're offline, connect and re-run ./frogs." >&2
+    exit 1
+  fi
+  touch "$SENTINEL"
+fi
+
+# 3. Launch.
+exec "$PY" -m frogs_yt "${ARGS[@]}"

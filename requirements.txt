@@ -1,0 +1,4 @@
+textual>=0.80,<2.0
+google-auth-oauthlib>=1.2,<2.0
+google-api-python-client>=2.130,<3.0
+openai>=2.0,<3.0

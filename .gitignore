@@ -1,0 +1,18 @@
+# Python virtual env & caches
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Local tooling
+.claude/
+
+# SECRETS — never commit these (the app stores them in ~/.config, but just in case)
+config.json
+token.json
+client_secret*.json
+*.local.json
+
+# Generated output
+frogs_leads.md
+*.draft.md
