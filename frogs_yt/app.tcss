@@ -59,6 +59,12 @@ StatusPanel {
     margin: 0 0 1 0;
 }
 
+/* TextArea defaults to height: 1fr, which collapses inside an auto-height
+   form. Pin an explicit height so the keywords box shows and accepts input. */
+#keywords {
+    height: 8;
+}
+
 .row {
     height: auto;
     layout: horizontal;
