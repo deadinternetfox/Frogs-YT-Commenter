@@ -5,7 +5,7 @@ from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Header
 
-from ..widgets import FrogBanner, StatusPanel
+from ..widgets import FrogBanner, PondBackground, StatusPanel
 
 
 class DashboardScreen(Screen):
@@ -17,6 +17,7 @@ class DashboardScreen(Screen):
     ]
 
     def compose(self) -> ComposeResult:
+        yield PondBackground(id="pond")
         yield Header()
         yield FrogBanner(subtitle="find videos · harvest comments · reply with AI")
         yield StatusPanel(id="status")

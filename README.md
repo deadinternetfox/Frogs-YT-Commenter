@@ -56,9 +56,13 @@ The first launch creates a local `.venv` and installs dependencies automatically
 1. **Login screen** — paste your YouTube API key and Save. To post replies, set the
    path to your `client_secret.json` (or drop it in the config folder) and click
    **Login with Google** (a browser opens once).
-2. **Search & Harvest** — type keywords + how deep to search. Hit **Buyer-intent
-   preset** to filter comments to ones saying *where / buy / price / link* etc.
-   Comments come back sorted by likes.
+2. **Search & Harvest** — type keywords + how deep to search, plus an optional
+   word filter. **Sort results by** most/fewest comments, most/least viewed or
+   liked, or newest/oldest (the harvest table shows comment + view counts).
+   **💾 Save preset** stores the whole config under a name, and **📂 Open preset**
+   loads it back (load · delete in place). A built-in **Buyer intent** preset
+   filters comments to ones saying *where / buy / price / link* etc. Within a
+   video, comments still sort by likes (press `o` to flip to recency).
 3. **Review** (default, safest) — for each AI draft:
    - `a` accept (keeps your edits)  ·  `r` regenerate  ·  `s` skip  ·  `c` copy link
    - then `p` to **batch-post everything you accepted** (throttled).

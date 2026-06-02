@@ -20,6 +20,16 @@ DEFAULT_SYSTEM_PROMPT = (
     "a bot; do not include links unless the comment explicitly asks where to buy."
 )
 
+# Filter words that surface comments with purchase intent. Ships as a built-in
+# search preset so the old "buyer-intent" one-click is still a click away.
+BUYER_INTENT_WORDS = [
+    "where", "buy", "link", "shop", "price", "sell",
+    "available", "purchase", "order", "how much",
+]
+
+# Fields that make up a search preset (mirrors the Search form).
+PRESET_FIELDS = ("keywords", "max_videos", "max_comments", "match_words", "order")
+
 DEFAULTS = {
     "youtube_api_key": "",
     "client_secret_path": "",  # set by user; '' -> use <config_dir>/client_secret.json
@@ -40,8 +50,20 @@ DEFAULTS = {
         "max_videos": 10,
         "max_comments": 50,
         "match_words": [],
-        "order": "relevance",
+        "order": "comments_desc",
     },
+    # Saved search presets. Seeded with the built-in buyer-intent filter so the
+    # old one-click button lives on as a reusable, editable preset.
+    "presets": [
+        {
+            "name": "Buyer intent",
+            "keywords": ["frog plushie", "amigurumi frog"],
+            "max_videos": 10,
+            "max_comments": 50,
+            "match_words": list(BUYER_INTENT_WORDS),
+            "order": "comments_desc",
+        }
+    ],
 }
 
 
@@ -129,6 +151,42 @@ class Config:
     @property
     def data(self):
         return self._data
+
+    # -- search presets ---------------------------------------------------
+    def presets(self):
+        """The list of saved search presets (creates the list if missing)."""
+        return self._data.setdefault("presets", [])
+
+    def get_preset(self, name):
+        """Return the preset matching name (case-insensitive), or None."""
+        key = (name or "").strip().lower()
+        for p in self.presets():
+            if p.get("name", "").lower() == key:
+                return p
+        return None
+
+    def save_preset(self, name, fields):
+        """Create or overwrite a preset, then persist. Returns the stored dict."""
+        name = (name or "").strip()
+        stored = {"name": name, **{k: fields[k] for k in PRESET_FIELDS if k in fields}}
+        existing = self.get_preset(name)
+        if existing is not None:
+            existing.clear()
+            existing.update(stored)
+        else:
+            self.presets().append(stored)
+        self.save()
+        return stored
+
+    def delete_preset(self, name):
+        """Remove a preset by name (case-insensitive) and persist."""
+        key = (name or "").strip().lower()
+        before = len(self.presets())
+        self._data["presets"] = [
+            p for p in self.presets() if p.get("name", "").lower() != key
+        ]
+        if len(self._data["presets"]) != before:
+            self.save()
 
     # -- derived helpers --------------------------------------------------
     def client_secret_file(self):

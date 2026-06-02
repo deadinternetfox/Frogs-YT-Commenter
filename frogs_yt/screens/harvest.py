@@ -43,7 +43,7 @@ class HarvestScreen(Screen):
 
     def on_mount(self) -> None:
         vt = self.query_one("#videos-table", DataTable)
-        vt.add_columns("Title", "Channel", "Keyword", "Comments")
+        vt.add_columns("Title", "Channel", "Keyword", "Comments", "Views")
         ct = self.query_one("#comments-table", DataTable)
         ct.add_columns("Author", "👍", "Replied", "Comment")
         self._populate_videos()
@@ -57,13 +57,16 @@ class HarvestScreen(Screen):
         vt = self.query_one("#videos-table", DataTable)
         self._repopulating = True
         vt.clear()
-        vt.add_row("‹ All videos ›", "", "", str(self._total_comments()), key="__all__")
+        vt.add_row(
+            "‹ All videos ›", "", "", str(self._total_comments()), "", key="__all__"
+        )
         for v in self.app.harvest_videos:
             vt.add_row(
                 _trim(v["title"], 50),
                 _trim(v["channel"], 20),
                 _trim(v["matched_keyword"], 18),
                 str(v.get("comment_count", 0)),
+                _fmt_count(v.get("views", 0)),
                 key=v["videoId"],
             )
         self._repopulating = False
@@ -165,3 +168,16 @@ class HarvestScreen(Screen):
 def _trim(s, n):
     s = s or ""
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _fmt_count(n):
+    """Compact view count: 1234 -> 1.2k, 3_400_000 -> 3.4M."""
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return ""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M".replace(".0M", "M")
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}k".replace(".0k", "k")
+    return str(n)

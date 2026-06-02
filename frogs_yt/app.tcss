@@ -30,6 +30,19 @@ StatusPanel {
     margin: 1 2;
     width: 100%;
     height: auto;
+    background: $surface;  /* solid so the pond bubbles stay behind, not through */
+}
+
+/* Dashboard ambient background — a subtle bubble field behind everything. */
+DashboardScreen {
+    layers: pond ui;
+}
+
+#pond {
+    layer: pond;
+    width: 100%;
+    height: 100%;
+    background: transparent;
 }
 
 /* Vertical menu of buttons on the dashboard */
@@ -59,10 +72,15 @@ StatusPanel {
     margin: 0 0 1 0;
 }
 
-/* TextArea defaults to height: 1fr, which collapses inside an auto-height
-   form. Pin an explicit height so the keywords box shows and accepts input. */
-#keywords {
+/* TextArea defaults to height: 1fr, which collapses to nothing inside an
+   auto-height form — so every form TextArea (keywords, reply prompt) needs an
+   explicit height to show and accept input. */
+.form TextArea {
     height: 8;
+}
+
+#prompt {
+    height: 12;
 }
 
 .row {
@@ -169,4 +187,53 @@ HelpModal {
 ConfirmModal {
     align: center middle;
     background: $background 70%;
+}
+
+/* Preset save / open modals */
+SavePresetModal, PresetPickerModal {
+    align: center middle;
+    background: $background 70%;
+}
+
+#save-preset-box {
+    width: 64;
+    max-width: 90%;
+    height: auto;
+    padding: 1 3 0 3;
+    border: thick $success 70%;
+    background: $panel;
+}
+
+#save-preset-title, #preset-picker-title {
+    text-style: bold;
+    color: $success;
+    padding: 0 0 1 0;
+}
+
+#save-preset-hint {
+    height: 1;
+    padding: 0 0 1 0;
+}
+
+#preset-picker-box {
+    width: 72;
+    max-width: 92%;
+    height: auto;
+    max-height: 90%;
+    padding: 1 3 0 3;
+    border: thick $success 70%;
+    background: $panel;
+}
+
+#preset-list {
+    height: auto;
+    max-height: 16;
+    margin: 0 0 1 0;
+    border: round $primary;
+    background: $surface;
+}
+
+#preset-picker-hint {
+    color: $text-muted;
+    padding: 0 0 1 0;
 }

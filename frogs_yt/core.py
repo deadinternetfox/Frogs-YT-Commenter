@@ -13,6 +13,78 @@ import urllib.request
 
 API_BASE = "https://www.googleapis.com/youtube/v3"
 
+# --------------------------------------------------------------------------
+# Result orderings offered by the TUI
+# --------------------------------------------------------------------------
+# YouTube's search `order` only sorts descending and can't sort by comment
+# count, so we map each friendly ordering to a best-effort API order for the
+# initial fetch and apply the precise sort client-side (after stats + comment
+# counts are known). This is what lets us offer "least viewed", "fewest
+# comments", "oldest", etc. — directions the API itself won't return.
+#   (id, label, api_order)
+RESULT_ORDERS = [
+    ("comments_desc", "Most comments",   "relevance"),
+    ("comments_asc",  "Fewest comments", "relevance"),
+    ("views_desc",    "Most viewed",     "viewCount"),
+    ("views_asc",     "Least viewed",    "viewCount"),
+    ("likes_desc",    "Most liked",      "rating"),
+    ("likes_asc",     "Least liked",     "rating"),
+    ("newest",        "Newest first",    "date"),
+    ("oldest",        "Oldest first",    "date"),
+    ("relevance",     "Most relevant",   "relevance"),
+    ("title",         "Title A → Z",     "title"),
+]
+
+# id -> (key function over a video dict, reverse?). 'relevance' is absent: it
+# keeps whatever order the API returned.
+_SORT_KEYS = {
+    "comments_desc": (lambda v: v.get("comment_count", 0), True),
+    "comments_asc":  (lambda v: v.get("comment_count", 0), False),
+    "views_desc":    (lambda v: v.get("views", 0), True),
+    "views_asc":     (lambda v: v.get("views", 0), False),
+    "likes_desc":    (lambda v: v.get("likes", 0), True),
+    "likes_asc":     (lambda v: v.get("likes", 0), False),
+    "newest":        (lambda v: v.get("published", ""), True),
+    "oldest":        (lambda v: v.get("published", ""), False),
+    "title":         (lambda v: (v.get("title") or "").lower(), False),
+}
+
+DEFAULT_ORDER = "comments_desc"
+
+
+def order_options():
+    """(label, id) pairs for a Select widget, in display order."""
+    return [(label, oid) for oid, label, _api in RESULT_ORDERS]
+
+
+def valid_order(order_id):
+    """Return order_id if recognised, else the default (handles old configs)."""
+    known = {oid for oid, _l, _a in RESULT_ORDERS}
+    return order_id if order_id in known else DEFAULT_ORDER
+
+
+def api_order(order_id):
+    """The YouTube search `order` to request for a friendly ordering id."""
+    for oid, _label, api in RESULT_ORDERS:
+        if oid == order_id:
+            return api
+    return "relevance"
+
+
+def sort_results(videos, blocks, order_id):
+    """Return (videos, blocks) re-ordered per a RESULT_ORDERS id.
+
+    Sorting is stable, so ties keep the API's original (e.g. relevance) order.
+    'relevance' and unknown ids pass through untouched.
+    """
+    spec = _SORT_KEYS.get(order_id)
+    if spec is None:
+        return videos, blocks
+    key, reverse = spec
+    videos = sorted(videos, key=key, reverse=reverse)
+    blocks = sorted(blocks, key=lambda vb: key(vb[0]), reverse=reverse)
+    return videos, blocks
+
 
 # --------------------------------------------------------------------------
 # Exceptions
@@ -181,6 +253,31 @@ def list_comments(video_id, api_key, max_results=100, match_words=None, progress
 
 
 # --------------------------------------------------------------------------
+# Video statistics (views / likes / total comment count)
+# --------------------------------------------------------------------------
+def fetch_video_stats(video_ids, api_key):
+    """Return {videoId: {"views", "likes", "total_comments"}} for the given ids.
+
+    Batches 50 ids per call (videos.list costs ~1 quota unit). Missing fields
+    (e.g. hidden like counts) default to 0. Ids absent from the response are
+    simply omitted.
+    """
+    ids = [v for v in video_ids if v]
+    out = {}
+    for i in range(0, len(ids), 50):
+        chunk = ids[i : i + 50]
+        data = api_get("videos", {"part": "statistics", "id": ",".join(chunk)}, api_key)
+        for item in data.get("items", []):
+            s = item.get("statistics", {})
+            out[item["id"]] = {
+                "views": int(s.get("viewCount", 0) or 0),
+                "likes": int(s.get("likeCount", 0) or 0),
+                "total_comments": int(s.get("commentCount", 0) or 0),
+            }
+    return out
+
+
+# --------------------------------------------------------------------------
 # Harvest: search keywords, then pull comments from each hit
 # --------------------------------------------------------------------------
 def harvest(keywords, api_key, max_videos=10, max_comments=50, match_words=None,
@@ -188,10 +285,22 @@ def harvest(keywords, api_key, max_videos=10, max_comments=50, match_words=None,
     """Search keywords and gather comments for every video found.
 
     Returns (videos, blocks) where blocks = [(video_dict, [comments]), ...] for
-    videos that had at least one (matching) comment. Each video dict gains a
-    'comment_count' field.
+    videos that had at least one (matching) comment. Each video dict gains
+    'comment_count' (matching comments harvested) plus 'views', 'likes' and
+    'total_comments' from the video's public statistics.
     """
     videos = search_videos(keywords, api_key, max_videos, order, progress=progress)
+    # Enrich with public statistics so the UI can sort by popularity. A failure
+    # here must not sink the harvest — fall back to zeroes.
+    try:
+        stats = fetch_video_stats([v["videoId"] for v in videos], api_key)
+    except YouTubeError:
+        stats = {}
+    for v in videos:
+        s = stats.get(v["videoId"], {})
+        v["views"] = s.get("views", 0)
+        v["likes"] = s.get("likes", 0)
+        v["total_comments"] = s.get("total_comments", 0)
     blocks = []
     total = len(videos)
     for i, v in enumerate(videos):
