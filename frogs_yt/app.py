@@ -5,11 +5,9 @@ from textual.theme import Theme
 
 from . import config, oauth
 from .replier import RepliedStore
-from .screens.autopost import AutopostScreen
 from .screens.dashboard import DashboardScreen
 from .screens.harvest import HarvestScreen
 from .screens.login import LoginScreen
-from .screens.review import ReviewScreen
 from .screens.search import SearchScreen
 from .screens.settings import SettingsScreen
 from .widgets import HelpModal
@@ -34,13 +32,14 @@ class FrogsApp(App):
     TITLE = "🐸 Frogs YouTube Replier"
     CSS_PATH = "app.tcss"
 
+    # Review and Auto-post are intentionally NOT registered here: they're pushed
+    # as fresh instances from Harvest so their reply queue is rebuilt each run.
+    # Registered screens are reused (on_mount fires once), which would go stale.
     SCREENS = {
         "dashboard": DashboardScreen,
         "login": LoginScreen,
         "search": SearchScreen,
         "harvest": HarvestScreen,
-        "review": ReviewScreen,
-        "autopost": AutopostScreen,
         "settings": SettingsScreen,
     }
 

@@ -267,6 +267,10 @@ class HarvestScreen(Screen):
 
     def on_screen_resume(self) -> None:
         # Refresh "replied" flags + any new harvest after returning to this screen.
+        # This screen is reused across harvests, so drop a filter that points at a
+        # video from a previous harvest (otherwise the comment list looks empty).
+        if self.video_filter not in {v["videoId"] for v in self.app.harvest_videos}:
+            self.video_filter = None
         self._populate_videos()
         self._show_comments()
 
