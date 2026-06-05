@@ -45,6 +45,18 @@ DEFAULTS = {
     "rate_limit_max_seconds": 0,  # if > min, wait a RANDOM time in [min, max]
     "per_run_cap": 25,
     "dry_run": False,
+    # Background crawler (standalone `python -m frogs_yt.spider`). Read-only:
+    # it finds & stores matching comments; it never posts.
+    "spider": {
+        "enabled": False,
+        "interval_seconds": 1800,     # gap between full crawl passes
+        "presets": [],                # preset names to crawl; [] -> use "defaults"
+        "max_videos": 15,
+        "max_comments": 100,
+        "include_replies": True,      # also pull reply threads (cheap: 1 unit/page)
+        "daily_quota_budget": 8000,   # stay under the 10k/day default; search=100 units
+        "match_query": "",            # optional extra filter applied to every preset
+    },
     "defaults": {
         "keywords": ["frog plushie", "amigurumi frog"],
         "max_videos": 10,
@@ -90,6 +102,23 @@ def token_path():
 
 def replied_path():
     return os.path.join(config_dir(), "replied.json")
+
+
+def db_path():
+    """The SQLite database shared by the TUI and the spider daemon."""
+    return os.path.join(config_dir(), "frogs.db")
+
+
+def spider_pid_path():
+    return os.path.join(config_dir(), "spider.pid")
+
+
+def spider_lock_path():
+    return os.path.join(config_dir(), "spider.lock")
+
+
+def spider_log_path():
+    return os.path.join(config_dir(), "spider.log")
 
 
 def _deep_merge(base, override):

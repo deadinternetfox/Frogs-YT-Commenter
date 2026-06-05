@@ -6,11 +6,9 @@
   dry-run, and the actual API call are identical in both.
 """
 
-import json
-import os
 import random
 
-from . import config, core
+from . import core, db
 
 
 def next_delay(cfg):
@@ -32,55 +30,46 @@ def delay_label(cfg):
 
 
 class RepliedStore:
-    """A persisted set of comment ids we've already replied to."""
+    """A persisted set of comment ids we've already replied to.
+
+    Backed by the SQLite DB (our_replies table) so the TUI, the inline reply
+    flow, the AI agent, and the spider daemon all dedupe against one store. The
+    public surface (has/add/count) is unchanged; legacy replied.json is imported
+    once by db.init_db().
+    """
 
     def __init__(self, path=None):
-        self.path = path or config.replied_path()
-        self._data = {}
-        self._load()
-
-    def _load(self):
-        if os.path.exists(self.path):
-            try:
-                with open(self.path, "r", encoding="utf-8") as f:
-                    self._data = json.load(f)
-            except (json.JSONDecodeError, OSError):
-                self._data = {}
+        # path kept for backwards-compatible construction; the DB owns the data.
+        db.init_db()
 
     def has(self, comment_id):
         # Dry-run entries are recorded for audit but must NOT block a later real
         # reply — otherwise previewing in dry-run would silently skip comments.
-        entry = self._data.get(comment_id)
-        return bool(entry) and not entry.get("dry_run")
+        return db.has_reply(comment_id)
 
     def count(self):
-        return sum(1 for e in self._data.values() if not e.get("dry_run"))
+        return db.reply_count()
 
-    def add(self, comment_id, reply_id=None, dry_run=False):
-        self._data[comment_id] = {"reply_id": reply_id, "dry_run": dry_run}
-        self._save()
-
-    def _save(self):
-        tmp = self.path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(self._data, f, indent=2)
-        os.replace(tmp, self.path)
+    def add(self, comment_id, reply_id=None, dry_run=False, text=None, source="tui"):
+        db.record_reply(comment_id, reply_id=reply_id, text=text,
+                        dry_run=dry_run, source=source)
 
 
-def post_one(youtube_service, comment, text, store, dry_run=False):
+def post_one(youtube_service, comment, text, store, dry_run=False, source="tui"):
     """Post (or, in dry-run, pretend to post) one reply and record it.
 
     Returns the new reply id ('DRY-RUN' when dry_run). Raises on API failure.
-    Skips silently-via-return if the comment was already replied to.
+    Skips silently-via-return if the comment was already replied to. `source`
+    tags where the reply came from (review/auto/agent/inline/batch).
     """
     cid = comment["commentId"]
     if store.has(cid):
         return None  # already handled — dedupe
     if dry_run:
-        store.add(cid, reply_id="DRY-RUN", dry_run=True)
+        store.add(cid, reply_id="DRY-RUN", dry_run=True, text=text, source=source)
         return "DRY-RUN"
     reply_id = core.post_reply(youtube_service, cid, text)
-    store.add(cid, reply_id=reply_id, dry_run=False)
+    store.add(cid, reply_id=reply_id, dry_run=False, text=text, source=source)
     return reply_id
 
 
