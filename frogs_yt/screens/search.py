@@ -16,7 +16,7 @@ from textual.widgets import (
     TextArea,
 )
 
-from .. import core
+from .. import core, db
 from ..widgets import PresetPickerModal, SavePresetModal
 
 
@@ -40,8 +40,10 @@ class SearchScreen(Screen):
                 id="order",
                 allow_blank=False,
             )
-            yield Label("Only keep comments containing these words (optional, space/comma sep)")
-            yield Input(" ".join(d["match_words"]), id="match", placeholder="where buy link shop price")
+            yield Label('Keep comments matching (optional) — words = any-of; or use '
+                        '"phrase", OR, -exclude, likes:>=5, author:x')
+            yield Input(" ".join(d["match_words"]), id="match",
+                        placeholder='where buy link shop price   ·   or:  "where to buy" OR price -giveaway')
             with Horizontal(classes="actions"):
                 yield Button("🐸  Run Harvest", id="run", variant="success")
                 yield Button("💾  Save preset", id="save-preset")
@@ -136,12 +138,20 @@ class SearchScreen(Screen):
         self.app.cfg["defaults"].update(cfg)
         self.app.cfg.save()
 
+        # A plain word list keeps the old any-of behavior; once the text uses
+        # query operators we route the whole string through match_query.
+        raw = self.query_one("#match", Input).value.strip()
+        if _looks_like_query(raw):
+            match_words, match_query = None, raw
+        else:
+            match_words, match_query = cfg["match_words"], None
+
         self.query_one("#run", Button).disabled = True
         self.query_one("#progress", ProgressBar).update(total=None)  # indeterminate
         self._set_status("Starting harvest…")
         self._harvest(
             cfg["keywords"], cfg["max_videos"], cfg["max_comments"],
-            cfg["match_words"], cfg["order"],
+            match_words, cfg["order"], match_query,
         )
 
     def _set_status(self, msg: str) -> None:
@@ -149,7 +159,8 @@ class SearchScreen(Screen):
 
     # -- worker -----------------------------------------------------------
     @work(thread=True, exclusive=True)
-    def _harvest(self, keywords, max_videos, max_comments, match_words, order) -> None:
+    def _harvest(self, keywords, max_videos, max_comments, match_words, order,
+                 match_query=None) -> None:
         def progress(done, total, label):
             self.app.call_from_thread(self._set_status, label)
 
@@ -158,13 +169,18 @@ class SearchScreen(Screen):
                 keywords, self.app.cfg["youtube_api_key"],
                 max_videos=max_videos, max_comments=max_comments,
                 match_words=match_words, order=core.api_order(order),
-                progress=progress,
+                match_query=match_query, progress=progress,
             )
         except core.YouTubeError as e:
-            self.app.call_from_thread(self._harvest_failed, _friendly(e))
+            self.app.call_from_thread(self._harvest_failed, core.friendly_error(e))
             return
         # Apply the precise client-side ordering (least/most, comment counts…).
         videos, blocks = core.sort_results(videos, blocks, order)
+        # Persist to the shared DB so the spider/agent/history see this harvest.
+        try:
+            db.store_harvest(videos, blocks, tag="harvest")
+        except Exception:
+            pass  # persistence is best-effort; never sink a successful harvest
         self.app.call_from_thread(self._harvest_done, videos, blocks)
 
     def _harvest_done(self, videos, blocks) -> None:
@@ -184,13 +200,17 @@ class SearchScreen(Screen):
         self.app.notify(message, title="Harvest failed", severity="error")
 
 
-def _friendly(err: "core.YouTubeError") -> str:
-    if isinstance(err, core.YouTubeAPIError):
-        if err.reason == "quotaExceeded":
-            return "Daily API quota exceeded — try tomorrow or use another key."
-        if err.code == 400:
-            return f"Bad request: {err.message}"
-        if err.code in (401, 403):
-            return f"Access denied — check the API key. ({err.message})"
-        return err.message
-    return str(err)
+_QUERY_FIELDS = ("likes:", "author:", "after:", "before:", "is:")
+
+
+def _looks_like_query(s: str) -> bool:
+    """True when the match text uses query operators (vs a plain any-of word list)."""
+    if not s:
+        return False
+    return (
+        '"' in s
+        or " OR " in s
+        or s.startswith("-")
+        or " -" in s
+        or any(f in s.lower() for f in _QUERY_FIELDS)
+    )

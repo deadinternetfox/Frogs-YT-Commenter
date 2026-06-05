@@ -331,6 +331,27 @@ def tag_match(comment_id, tag, score=0.0, conn=None):
             conn.close()
 
 
+def store_harvest(videos, blocks, tag=None, matcher=None):
+    """Persist a harvest in one transaction: upsert videos, then their comments.
+
+    Videos are written first so the comments' FK is satisfied. When `tag` is
+    given, every stored comment is tagged with it (score from `matcher` if
+    provided) so the crawl/preset that surfaced it is queryable later.
+    """
+    conn = connect()
+    try:
+        for v in videos:
+            upsert_video(v, conn=conn)
+        for video, comments in blocks:
+            for c in comments:
+                upsert_comment(c, conn=conn)
+                if tag:
+                    score = matcher.score(c) if matcher is not None else 0.0
+                    tag_match(c["commentId"], tag, score, conn=conn)
+    finally:
+        conn.close()
+
+
 def mark_video_status(video_id, status):
     conn = connect()
     try:

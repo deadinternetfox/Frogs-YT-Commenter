@@ -14,6 +14,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from . import matching
+
 API_BASE = "https://www.googleapis.com/youtube/v3"
 
 # --------------------------------------------------------------------------
@@ -111,6 +113,25 @@ class YouTubeNetworkError(YouTubeError):
     """A transport-level failure (DNS, timeout, connection refused, ...)."""
 
 
+def friendly_error(err):
+    """A short, human message for a YouTubeError — shared by TUI/daemon/agent."""
+    if isinstance(err, YouTubeAPIError):
+        if err.reason == "quotaExceeded":
+            return "Daily API quota exceeded — try tomorrow or use another key."
+        if err.reason == "commentsDisabled":
+            return "Comments are disabled on this video."
+        if err.reason == "videoNotFound":
+            return "That video no longer exists."
+        if err.reason in ("forbidden", "insufficientPermissions"):
+            return "Not allowed — re-check the login / permissions."
+        if err.code == 400:
+            return f"Bad request: {err.message}"
+        if err.code in (401, 403):
+            return f"Access denied — check the API key. ({err.message})"
+        return err.message
+    return str(err)
+
+
 # --------------------------------------------------------------------------
 # Low-level API helper
 # --------------------------------------------------------------------------
@@ -196,21 +217,112 @@ def search_videos(keywords, api_key, max_results=25, order="relevance", progress
 # --------------------------------------------------------------------------
 # List comments on a video
 # --------------------------------------------------------------------------
-def list_comments(video_id, api_key, max_results=100, match_words=None, progress=None):
-    """Return top-level comments for a video, optionally filtered by words.
+def _top_comment_dict(top, video_id):
+    """Build our comment dict from a commentThreads topLevelComment resource."""
+    cs = top["snippet"]
+    cid = top["id"]
+    return {
+        "commentId": cid,
+        "author": cs.get("authorDisplayName"),
+        "authorChannelId": (cs.get("authorChannelId") or {}).get("value"),
+        "text": cs.get("textDisplay", ""),
+        "likes": cs.get("likeCount", 0),
+        "published": cs.get("publishedAt"),
+        "updated": cs.get("updatedAt"),
+        "videoId": video_id,
+        "link": f"https://www.youtube.com/watch?v={video_id}&lc={cid}",
+        "parentId": None,
+        "isReply": False,
+        "threadId": cid,
+    }
 
-    Returns [] (not an error) when comments are disabled on the video.
+
+def _reply_comment_dict(item, video_id, thread_id):
+    """Build our comment dict from a comment resource (a reply)."""
+    cs = item["snippet"]
+    rid = item["id"]
+    return {
+        "commentId": rid,
+        "author": cs.get("authorDisplayName"),
+        "authorChannelId": (cs.get("authorChannelId") or {}).get("value"),
+        "text": cs.get("textDisplay", ""),
+        "likes": cs.get("likeCount", 0),
+        "published": cs.get("publishedAt"),
+        "updated": cs.get("updatedAt"),
+        "videoId": video_id,
+        "link": f"https://www.youtube.com/watch?v={video_id}&lc={rid}",
+        "parentId": cs.get("parentId") or thread_id,
+        "isReply": True,
+        "threadId": thread_id,
+    }
+
+
+def list_replies(parent_comment_id, api_key, video_id=None, max_results=200, progress=None):
+    """Return all replies under a top-level comment (comments.list, 1 unit/page).
+
+    Returns [] (not an error) if the parent/thread is gone.
     """
     out = []
     page_token = None
+    while len(out) < max_results:
+        try:
+            data = api_get(
+                "comments",
+                {
+                    "part": "snippet",
+                    "parentId": parent_comment_id,
+                    "maxResults": min(100, max_results - len(out)),
+                    "textFormat": "plainText",
+                    **({"pageToken": page_token} if page_token else {}),
+                },
+                api_key,
+            )
+        except YouTubeAPIError as e:
+            if e.reason in ("commentNotFound", "videoNotFound", "processingFailure"):
+                break
+            raise
+        for item in data.get("items", []):
+            out.append(_reply_comment_dict(item, video_id, parent_comment_id))
+        if progress:
+            progress(len(out), max_results, f"replies: {parent_comment_id}")
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+        time.sleep(0.2)
+    return out
+
+
+def list_comments(video_id, api_key, max_results=100, match_words=None, *,
+                  match_query=None, include_replies=False, progress=None):
+    """Return matching comments for a video.
+
+    Matching: `match_query` (the matching.py query language) takes precedence;
+    otherwise the legacy `match_words` list (OR of words) is used; otherwise
+    everything matches. When `include_replies` is set, reply threads are pulled
+    too — a matched top-level comment brings its whole thread along for context,
+    and replies that independently match are returned with their parent. The
+    `max_results` budget counts top-level threads fetched (as before); replies
+    are additional.
+
+    Returns [] (not an error) when comments are disabled or the video is gone.
+    """
+    matcher = (matching.compile_query(match_query) if match_query
+               else matching.from_words(match_words))
+    out, seen = [], set()
+    page_token = None
     fetched = 0
-    match_words = [w.lower() for w in (match_words or []) if w.strip()]
+
+    def add(comment):
+        if comment["commentId"] not in seen:
+            seen.add(comment["commentId"])
+            out.append(comment)
+
     while fetched < max_results:
         try:
             data = api_get(
                 "commentThreads",
                 {
-                    "part": "snippet",
+                    "part": "snippet,replies" if include_replies else "snippet",
                     "videoId": video_id,
                     "maxResults": min(100, max_results - fetched),
                     "order": "time",
@@ -228,23 +340,32 @@ def list_comments(video_id, api_key, max_results=100, match_words=None, progress
                 break
             raise
         for item in data.get("items", []):
-            top = item["snippet"]["topLevelComment"]
-            cs = top["snippet"]
-            text = cs["textDisplay"]
-            if match_words and not any(w in text.lower() for w in match_words):
-                continue
-            cid = top["id"]
-            out.append(
-                {
-                    "commentId": cid,
-                    "author": cs["authorDisplayName"],
-                    "text": text,
-                    "likes": cs.get("likeCount", 0),
-                    "published": cs["publishedAt"],
-                    "videoId": video_id,
-                    "link": f"https://www.youtube.com/watch?v={video_id}&lc={cid}",
-                }
-            )
+            sn = item["snippet"]
+            top = _top_comment_dict(sn["topLevelComment"], video_id)
+            top_matches = matcher.matches(top)
+
+            replies = []
+            if include_replies and sn.get("totalReplyCount", 0):
+                inline = [
+                    _reply_comment_dict(r, video_id, top["commentId"])
+                    for r in (item.get("replies") or {}).get("comments", [])
+                ]
+                # Inline gives up to ~5; page the rest only when there are more.
+                if len(inline) >= sn["totalReplyCount"]:
+                    replies = inline
+                else:
+                    replies = list_replies(top["commentId"], api_key, video_id)
+
+            if top_matches:
+                add(top)
+                for r in replies:        # whole thread as context
+                    add(r)
+            else:
+                hit = [r for r in replies if matcher.matches(r)]
+                if hit:
+                    add(top)             # parent of a matching reply (context)
+                    for r in hit:
+                        add(r)
         fetched += len(data.get("items", []))
         if progress:
             progress(min(fetched, max_results), max_results, f"comments: {video_id}")
@@ -284,13 +405,16 @@ def fetch_video_stats(video_ids, api_key):
 # Harvest: search keywords, then pull comments from each hit
 # --------------------------------------------------------------------------
 def harvest(keywords, api_key, max_videos=10, max_comments=50, match_words=None,
-            order="relevance", progress=None):
+            order="relevance", *, match_query=None, include_replies=False,
+            progress=None):
     """Search keywords and gather comments for every video found.
 
     Returns (videos, blocks) where blocks = [(video_dict, [comments]), ...] for
     videos that had at least one (matching) comment. Each video dict gains
     'comment_count' (matching comments harvested) plus 'views', 'likes' and
-    'total_comments' from the video's public statistics.
+    'total_comments' from the video's public statistics. `match_query`/
+    `include_replies` are passed through to list_comments (the spider sets both;
+    the live TUI harvest leaves include_replies off to keep its quota cost flat).
     """
     videos = search_videos(keywords, api_key, max_videos, order, progress=progress)
     # Enrich with public statistics so the UI can sort by popularity. A failure
@@ -309,7 +433,10 @@ def harvest(keywords, api_key, max_videos=10, max_comments=50, match_words=None,
     for i, v in enumerate(videos):
         if progress:
             progress(i, total, f"[{i + 1}/{total}] {v['title'][:48]}")
-        comments = list_comments(v["videoId"], api_key, max_comments, match_words)
+        comments = list_comments(
+            v["videoId"], api_key, max_comments, match_words,
+            match_query=match_query, include_replies=include_replies,
+        )
         v["comment_count"] = len(comments)
         if comments:
             blocks.append((v, comments))
